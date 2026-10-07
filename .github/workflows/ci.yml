@@ -1,0 +1,33 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: PYTHONPATH=. pytest -q
+  e2e:
+    # Full pipeline on the runner: produce a burst, let Spark process it, then
+    # verify Spark's candles against the pure-Python reference.
+    if: github.event_name == 'workflow_dispatch'  # slow; run manually from the Actions tab
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --build
+      - run: sleep 150
+      - run: docker compose exec -T postgres psql -U pipeline -d trades -c "select count(*) from trades; select count(*) from candles_1m;"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install psycopg2-binary && PYTHONPATH=. python scripts/verify_pipeline.py
+      - if: failure()
+        run: docker compose logs --tail=100
